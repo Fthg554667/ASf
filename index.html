@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MP4 转 MP3</title>
+<style>
+  body{font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#f5f5f5;color:#333}
+  .box{background:#fff;padding:40px;border-radius:16px;box-shadow:0 4px 20px rgba(0,0,0,.08);text-align:center;width:90%;max-width:420px}
+  h1{font-size:22px;margin:0 0 24px}
+  input[type=file]{display:none}
+  .btn{display:inline-block;padding:12px 28px;border-radius:10px;background:#2563eb;color:#fff;font-size:16px;cursor:pointer;border:none}
+  .btn:disabled{background:#aaa;cursor:not-allowed}
+  .btn:hover:not(:disabled){background:#1d4ed8}
+  .file-name{margin:16px 0;color:#666;font-size:14px;word-break:break-all}
+  .status{margin-top:16px;font-size:14px;color:#888}
+  a.download{display:none;margin-top:20px;padding:12px 28px;border-radius:10px;background:#16a34a;color:#fff;text-decoration:none;font-size:16px}
+</style>
+</head>
+<body>
+<div class="box">
+  <h1>MP4 转 MP3</h1>
+  <input type="file" id="file" accept="video/mp4">
+  <label for="file" class="btn">选择 MP4 文件</label>
+  <div class="file-name" id="fileName">未选择文件</div>
+  <button class="btn" id="convertBtn" disabled>开始转换</button>
+  <div class="status" id="status"></div>
+  <a class="download" id="download" download="output.mp3">下载 MP3</a>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/lamejs@1.2.1/lame.min.js"></script>
+<script>
+const fileInput = document.getElementById('file');
+const fileName = document.getElementById('fileName');
+const convertBtn = document.getElementById('convertBtn');
+const status = document.getElementById('status');
+const download = document.getElementById('download');
+let selectedFile = null;
+
+fileInput.addEventListener('change', () => {
+  selectedFile = fileInput.files[0];
+  if (selectedFile) {
+    fileName.textContent = selectedFile.name;
+    convertBtn.disabled = false;
+    status.textContent = '';
+    download.style.display = 'none';
+  }
+});
+
+// 用 FileReader 兜底读取文件，兼容旧版手机浏览器
+function readFileAsArrayBuffer(file) {
+  return new Promise((resolve, reject) => {
+    if (typeof file.arrayBuffer === 'function') {
+      file.arrayBuffer().then(resolve).catch(reject);
+    } else {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsArrayBuffer(file);
+    }
+  });
+}
+
+convertBtn.addEventListener('click', async () => {
+  if (!selectedFile) return;
+  convertBtn.disabled = true;
+  status.textContent = '正在转换，请稍候…';
+  try {
+    const arrayBuffer = await readFileAsArrayBuffer(selectedFile);
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+
+    const channels = 1;
+    const sampleRate = audioBuffer.sampleRate;
+    const samples = audioBuffer.length;
+    const left = audioBuffer.getChannelData(0);
+    const right = audioBuffer.numberOfChannels > 1 ? audioBuffer.getChannelData(1) : left;
+
+    const mp3encoder = new lamejs.Mp3Encoder(channels, sampleRate, 128);
+    const blockSize = 1152;
+    const mp3Data = [];
+
+    for (let i = 0; i < samples; i += blockSize) {
+      const len = Math.min(blockSize, samples - i);
+      const leftChunk = new Int16Array(len);
+      const rightChunk = new Int16Array(len);
+      for (let j = 0; j < len; j++) {
+        const l = Math.max(-1, Math.min(1, left[i + j]));
+        const r = Math.max(-1, Math.min(1, right[i + j]));
+        leftChunk[j] = l < 0 ? l * 0x8000 : l * 0x7FFF;
+        rightChunk[j] = r < 0 ? r * 0x8000 : r * 0x7FFF;
+      }
+      const buf = mp3encoder.encodeBuffer(leftChunk, rightChunk);
+      if (buf.length > 0) mp3Data.push(buf);
+    }
+    const endBuf = mp3encoder.flush();
+    if (endBuf.length > 0) mp3Data.push(endBuf);
+
+    const blob = new Blob(mp3Data, {type: 'audio/mpeg'});
+    const url = URL.createObjectURL(blob);
+    download.href = url;
+    download.download = selectedFile.name.replace(/\.mp4$/i, '') + '.mp3';
+    download.style.display = 'inline-block';
+    status.textContent = '转换完成！';
+  } catch (e) {
+    status.textContent = '转换失败：' + e.message;
+  } finally {
+    convertBtn.disabled = false;
+  }
+});
+</script>
+</body>
+</html>
